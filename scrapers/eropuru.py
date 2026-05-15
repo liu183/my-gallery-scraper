@@ -109,12 +109,22 @@ def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
             continue
         if any(p in full for p in ("/wp-", "/feed", "#", "/author/", "?", "/page/")):
             continue
-        # Must look like a content page
         path = urlparse(full).path
+        # Reject ANY index page: /<slug>/index.html or bare /
+        if path.endswith("/index.html") or path in ("/", "/index.html"):
+            continue
+        # Reject short-slug directory pages like /ymd/, /okini/ (≤5 chars between slashes with no file)
+        segments = [s for s in path.split("/") if s]
+        if len(segments) == 1 and len(segments[0]) <= 6 and "." not in segments[0]:
+            continue
+        # Must look like a content page
         if not (path.endswith(".html") or path.rstrip("/").count("/") >= 2):
             continue
-        # Skip homepage
-        if path in ("/", "/index.html"):
+        # Gallery pages on eropuru are typically /zyoyu/<numeric-id>.html — but we
+        # already excluded /zyoyu/. Real galleries live at /<slug>/<numeric>.html
+        # or /<numeric>.html. Require either a numeric component or depth ≥ 2.
+        last = segments[-1].replace(".html", "") if segments else ""
+        if not last:
             continue
         if full in seen:
             continue
