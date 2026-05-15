@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from scrapers.common import (
     build_client,
     download_gallery,
+    dump_debug_html,
     emit_github_output,
     fetch_html,
     load_state,
@@ -31,31 +32,62 @@ STATE_FILE = Path("state/eropuru.json")
 OUT_DIR = Path("output")
 
 
+_NAV_TEXT_PATTERNS = (
+    "あ行", "か行", "さ行", "た行", "な行", "は行", "ま行", "や行", "ら行", "わ行",
+    "ホーム", "サイトマップ", "プロフィール", "次へ", "前へ", "トップ", "TOP",
+    "ホーム", "home", "Home",
+)
+
+
 def list_actresses(client) -> list[tuple[str, str]]:
-    """Return list of (name, url) in display order."""
+    """Return list of (name, url) of actress detail pages from the zyoyu index.
+
+    The index page contains hiragana row navigation (あ行, か行, ...) plus
+    actress entries. We need to follow ALL non-nav /zyoyu/ links to find
+    actresses. Each actress link points to a page like /zyoyu/<name>.html
+    or /zyoyu/<row>/<name>.html
+    """
     html = fetch_html(client, INDEX_URL)
     soup = BeautifulSoup(html, "lxml")
+    container = soup.select_one("#main, .content, main, body") or soup
     results: list[tuple[str, str]] = []
     seen = set()
-    # Common pattern: <a href="..."> name </a> within content area
-    container = soup.select_one("#main, .content, main, body")
-    for a in (container or soup).select("a[href]"):
+    for a in container.select("a[href]"):
         href = a.get("href")
         text = a.get_text(strip=True)
         if not href or not text:
             continue
+        # Filter out navigation/section links
+        if text in _NAV_TEXT_PATTERNS:
+            continue
+        if len(text) > 30:  # likely not a person name
+            continue
         full = urljoin(INDEX_URL, href)
-        # Heuristic: actress pages live under /zyoyu/ but are not the index itself
-        if "/zyoyu/" in full and full != INDEX_URL and not full.endswith("index.html"):
-            if full in seen:
-                continue
-            seen.add(full)
-            results.append((text, full))
+        if "/zyoyu/" not in full:
+            continue
+        if full == INDEX_URL or full.rstrip("/").endswith("/zyoyu") or full.endswith("/index.html"):
+            continue
+        # Skip alphabet/row index pages (short slugs like "agyo", or single letters)
+        path = urlparse(full).path
+        last = path.rstrip("/").split("/")[-1].replace(".html", "")
+        if len(last) <= 3:  # too short to be a name slug
+            continue
+        if full in seen:
+            continue
+        seen.add(full)
+        results.append((text, full))
+    if not results:
+        dump_debug_html("eropuru-index", html)
     return results
 
 
 def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
-    """Return list of (title, gallery_url) for one actress, in display order."""
+    """Find gallery URLs from an actress page.
+
+    Gallery URLs typically live OUTSIDE /zyoyu/ on this site (under /post/,
+    /gravure/, or year-month archives). They are NOT navigation links to
+    other actresses.
+    """
     html = fetch_html(client, actress_url)
     soup = BeautifulSoup(html, "lxml")
     results: list[tuple[str, str]] = []
@@ -66,14 +98,20 @@ def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
         if not href:
             continue
         full = urljoin(actress_url, href)
-        # Same site, looks like an article/gallery page
         if BASE not in full or full == actress_url:
             continue
-        if any(p in full for p in (".html", "/post", "/p/", "/g/")):
-            if full in seen:
-                continue
-            seen.add(full)
-            results.append((text or "gallery", full))
+        if "/zyoyu/" in full:  # navigation to other actresses, skip
+            continue
+        if any(p in full for p in ("/wp-", "/feed", "#", "/category/", "/tag/", "/author/")):
+            continue
+        if not (full.endswith(".html") or full.rstrip("/").count("/") >= 3):
+            continue
+        if full in seen:
+            continue
+        seen.add(full)
+        results.append((text or "gallery", full))
+    if not results:
+        dump_debug_html(f"eropuru-actress-{slugify(actress_url)}", html)
     return results
 
 

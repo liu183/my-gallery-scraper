@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from scrapers.common import (
     build_client,
     download_gallery,
+    dump_debug_html,
     emit_github_output,
     fetch_html,
     load_state,
@@ -35,6 +36,7 @@ PAGES_TO_SCAN = 5
 
 def list_posts(client, cat_url: str) -> list[str]:
     urls: list[str] = []
+    base_host = "bestgirlsexy.com"
     for page in range(1, PAGES_TO_SCAN + 1):
         url = cat_url if page == 1 else f"{cat_url.rstrip('/')}/page/{page}/"
         try:
@@ -43,12 +45,44 @@ def list_posts(client, cat_url: str) -> list[str]:
             print(f"[warn] {url}: {e}")
             break
         soup = BeautifulSoup(html, "lxml")
-        for a in soup.select(
-            "article h2 a, article .entry-title a, h2.entry-title a, a[rel='bookmark']"
-        ):
-            href = a.get("href")
-            if href and href not in urls:
-                urls.append(href)
+        found: list[str] = []
+        # Try a broad set of selectors used by various WordPress themes
+        selectors = [
+            "article h2 a", "article h3 a", "article .entry-title a",
+            "h2.entry-title a", "h2.post-title a", ".post-title a",
+            "a[rel='bookmark']", ".entry-header a", ".post-header a",
+            "article a.permalink", ".grid-item a", ".post-item a",
+            ".list-item a", ".thumbnail a",
+        ]
+        for sel in selectors:
+            for a in soup.select(sel):
+                href = a.get("href")
+                if href and href not in found:
+                    found.append(href)
+            if found:
+                break
+        # Last-resort fallback: any internal article-looking link
+        if not found:
+            for a in soup.select("a[href]"):
+                href = a.get("href") or ""
+                if (
+                    base_host in href
+                    and href != cat_url
+                    and "/category/" not in href
+                    and "/page/" not in href
+                    and "/tag/" not in href
+                    and "/author/" not in href
+                    and "#" not in href
+                    and href.rstrip("/").count("/") >= 3  # has slug, not just root
+                ):
+                    if href not in found:
+                        found.append(href)
+        if not found:
+            print(f"[debug] no post links found on {url}; dumping HTML")
+            dump_debug_html(f"bestgirlsexy-{page}", html)
+        for u in found:
+            if u not in urls:
+                urls.append(u)
     return urls
 
 

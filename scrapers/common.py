@@ -1,10 +1,7 @@
 """Shared utilities for all scrapers.
 
-Provides:
-- HTTP client with retries, UA rotation, rate limiting
-- Image download with size/count caps
-- Manifest writer
-- State file load/save
+Uses curl_cffi (browser TLS fingerprint impersonation) to bypass Cloudflare
+and other anti-bot WAFs that block plain Python clients.
 """
 from __future__ import annotations
 
@@ -18,76 +15,103 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
 
-import httpx
+from curl_cffi import requests as cffi_requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 MAX_IMAGES_PER_GALLERY = 500
-DEFAULT_TIMEOUT = 30.0
+DEFAULT_TIMEOUT = 45.0
 MIN_DELAY = 1.5
 MAX_DELAY = 3.5
 
-UA_POOL = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-]
+# curl_cffi browser fingerprints to rotate. "chrome124" is the latest stable.
+IMPERSONATE_POOL = ["chrome124", "chrome120", "chrome116", "edge101", "safari17_0"]
 
 
-def random_ua() -> str:
-    return random.choice(UA_POOL)
+def random_impersonate() -> str:
+    return random.choice(IMPERSONATE_POOL)
 
 
 def polite_sleep(min_s: float = MIN_DELAY, max_s: float = MAX_DELAY) -> None:
     time.sleep(random.uniform(min_s, max_s))
 
 
-def build_client(referer: str | None = None) -> httpx.Client:
-    headers = {
-        "User-Agent": random_ua(),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8,zh-CN;q=0.7",
-    }
-    if referer:
-        headers["Referer"] = referer
-    return httpx.Client(
-        headers=headers,
-        timeout=DEFAULT_TIMEOUT,
-        follow_redirects=True,
-        http2=True,
-    )
+class Client:
+    """Thin wrapper over curl_cffi Session with retry-aware get/stream."""
+
+    def __init__(self, referer: str | None = None) -> None:
+        self.impersonate = random_impersonate()
+        self.session = cffi_requests.Session(impersonate=self.impersonate)
+        self.session.headers.update(
+            {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8,zh-CN;q=0.7",
+            }
+        )
+        if referer:
+            self.session.headers["Referer"] = referer
+
+    def close(self) -> None:
+        try:
+            self.session.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def __enter__(self) -> "Client":
+        return self
+
+    def __exit__(self, *a) -> None:
+        self.close()
+
+
+def build_client(referer: str | None = None) -> Client:
+    return Client(referer=referer)
+
+
+class FetchError(RuntimeError):
+    pass
 
 
 @retry(
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=2, min=2, max=30),
-    retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
+    retry=retry_if_exception_type((FetchError,)),
     reraise=True,
 )
-def fetch_html(client: httpx.Client, url: str) -> str:
+def fetch_html(client: Client, url: str) -> str:
     polite_sleep(0.8, 1.8)
-    r = client.get(url)
-    r.raise_for_status()
-    r.encoding = r.encoding or "utf-8"
-    return r.text
+    try:
+        r = client.session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True)
+    except Exception as e:  # noqa: BLE001
+        raise FetchError(f"network error for {url}: {e}") from e
+    if r.status_code >= 400:
+        raise FetchError(f"HTTP {r.status_code} for {url}")
+    # curl_cffi auto-decodes; if encoding missing, fallback
+    try:
+        return r.text
+    except Exception:  # noqa: BLE001
+        return r.content.decode("utf-8", errors="ignore")
 
 
 @retry(
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=2, min=2, max=30),
-    retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
+    retry=retry_if_exception_type((FetchError,)),
     reraise=True,
 )
-def download_image(client: httpx.Client, url: str, dst: Path) -> int:
-    polite_sleep(0.4, 1.0)
-    with client.stream("GET", url) as r:
-        r.raise_for_status()
-        total = 0
-        with open(dst, "wb") as f:
-            for chunk in r.iter_bytes(chunk_size=64 * 1024):
-                if chunk:
-                    f.write(chunk)
-                    total += len(chunk)
+def download_image(client: Client, url: str, dst: Path) -> int:
+    polite_sleep(0.3, 0.9)
+    try:
+        r = client.session.get(url, timeout=DEFAULT_TIMEOUT, allow_redirects=True, stream=True)
+    except Exception as e:  # noqa: BLE001
+        raise FetchError(f"network error for {url}: {e}") from e
+    if r.status_code >= 400:
+        raise FetchError(f"HTTP {r.status_code} for {url}")
+    total = 0
+    with open(dst, "wb") as f:
+        for chunk in r.iter_content(chunk_size=64 * 1024):
+            if chunk:
+                f.write(chunk)
+                total += len(chunk)
     return total
 
 
@@ -113,9 +137,9 @@ class GalleryManifest:
     site: str
     title: str
     source_url: str
-    preview: str           # local filename of preview image (relative)
+    preview: str
     image_count: int
-    images: list[str] = field(default_factory=list)  # ordered list of local filenames
+    images: list[str] = field(default_factory=list)
     truncated: bool = False
     scraped_at: str = ""
 
@@ -141,7 +165,6 @@ def mark_processed(state: dict, url: str, cap: int = 2000) -> None:
     processed = state.setdefault("processed", [])
     if url not in processed:
         processed.append(url)
-    # Trim oldest to keep state small
     if len(processed) > cap:
         del processed[: len(processed) - cap]
     state["cursor"] = url
@@ -156,7 +179,6 @@ def download_gallery(
     out_dir: Path,
     referer: str | None = None,
 ) -> GalleryManifest:
-    """Download a list of image URLs, write manifest, return it."""
     out_dir.mkdir(parents=True, exist_ok=True)
     urls = list(image_urls)
     truncated = False
@@ -196,7 +218,6 @@ def download_gallery(
 
 
 def write_artifact_meta(out_dir: Path, *, site: str, slug: str) -> None:
-    """Write small meta file to help notify workflow identify artifact."""
     meta = {
         "site": site,
         "slug": slug,
@@ -209,10 +230,18 @@ def write_artifact_meta(out_dir: Path, *, site: str, slug: str) -> None:
 
 
 def emit_github_output(name: str, value: str) -> None:
-    """Write to $GITHUB_OUTPUT for downstream workflow steps."""
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if not gh_out:
         print(f"::set-output name={name}::{value}")
         return
     with open(gh_out, "a", encoding="utf-8") as f:
         f.write(f"{name}={value}\n")
+
+
+def dump_debug_html(name: str, html: str, out_dir: Path = Path("output")) -> None:
+    """Save HTML for offline debugging when selectors don't match."""
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"debug-{name}.html").write_text(html, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass

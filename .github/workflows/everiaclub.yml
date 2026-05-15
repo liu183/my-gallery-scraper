@@ -56,8 +56,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add state/everiaclub.json || true
           if git diff --cached --quiet; then
-            echo "no state changes"
-          else
-            git commit -m "chore(state): everiaclub $(date -u +%FT%TZ)"
-            git push
+            echo "no state changes"; exit 0
           fi
+          git commit -m "chore(state): everiaclub $(date -u +%FT%TZ)"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && exit 0
+            echo "push attempt $i failed, retrying..."
+            sleep $((RANDOM % 5 + 2))
+          done
+          echo "push failed after retries"; exit 1
