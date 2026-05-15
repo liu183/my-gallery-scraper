@@ -30,19 +30,43 @@ OUT_DIR = Path("output")
 PAGES_TO_SCAN = 5  # scan up to 5 listing pages for unprocessed posts
 
 
-def _warmup(client) -> None:
-    """Visit Google to obtain natural cookies / referer chain that some
-    Cloudflare-protected sites use to identify benign clients."""
-    try:
-        client.session.get("https://www.google.com/", timeout=10)
-    except Exception:  # noqa: BLE001
-        pass
+def _prime_cloudflare(client) -> None:
+    """Hit the site root with browser-shaped headers to obtain cf_clearance
+    cookie before fetching listing pages. Cross-origin Google warmup tends
+    to *increase* CF suspicion, so we go direct."""
+    # Add full Sec-* + Sec-Ch-Ua header set that Chrome 124 actually sends.
+    client.session.headers.update({
+        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+    })
+    for attempt in range(3):
+        try:
+            r = client.session.get(BASE, timeout=30, allow_redirects=True)
+            if r.status_code < 400:
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        # Brief pause; CF challenge may need a second hit
+        import time
+        time.sleep(2 + attempt * 2)
 
 
 def list_post_urls(client) -> list[str]:
     """Return post URLs from newest to oldest across first N pages."""
-    _warmup(client)
+    _prime_cloudflare(client)
     urls: list[str] = []
+    # After priming, set headers that match in-site navigation.
+    client.session.headers.update({
+        "Sec-Fetch-Site": "same-origin",
+        "Referer": BASE,
+    })
     for page in range(1, PAGES_TO_SCAN + 1):
         url = BASE if page == 1 else f"{BASE}page/{page}/"
         try:
