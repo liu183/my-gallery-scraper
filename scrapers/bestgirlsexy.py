@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import re
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -86,30 +87,63 @@ def list_posts(client, cat_url: str) -> list[str]:
     return urls
 
 
-def extract_gallery(client, post_url: str) -> tuple[str, list[str]]:
-    html = fetch_html(client, post_url)
-    soup = BeautifulSoup(html, "lxml")
-    title_el = soup.select_one("h1.entry-title, h1, .entry-title")
-    title = title_el.get_text(strip=True) if title_el else "Untitled"
+_SKIP_IMG_HINTS = (
+    "avatar", "icon", "logo", "emoji", "smile", "loading", "spinner",
+    "favicon", "/themes/", "/wp-content/themes/", "gravatar", "ad-banner",
+    "/plugins/", "wp-includes",
+)
+
+
+def _extract_images(soup, post_url: str) -> list[str]:
     img_urls: list[str] = []
     seen = set()
-    container = soup.select_one("article, .entry-content, .post-content, main") or soup
-    for img in container.select("img"):
+    # Prefer content container, but also scan body as fallback
+    containers = [
+        soup.select_one("article .entry-content"),
+        soup.select_one("article"),
+        soup.select_one(".entry-content"),
+        soup.select_one(".post-content"),
+        soup.select_one("main"),
+        soup,
+    ]
+    container = next((c for c in containers if c is not None), soup)
+    candidates = container.select("img")
+    if len(candidates) <= 1:
+        # Article wrapper had only 1 image — fall back to whole body
+        candidates = soup.select("body img") or soup.select("img")
+    for img in candidates:
         src = (
             img.get("data-src")
             or img.get("data-lazy-src")
             or img.get("data-original")
+            or img.get("data-srcset", "").split(",")[0].strip().split(" ")[0]
+            or img.get("srcset", "").split(",")[0].strip().split(" ")[0]
             or img.get("src")
         )
-        if not src:
+        if not src or src.startswith("data:"):
             continue
         full = urljoin(post_url, src)
-        if any(skip in full.lower() for skip in ("avatar", "icon", "logo", "emoji")):
+        low = full.lower()
+        if any(skip in low for skip in _SKIP_IMG_HINTS):
+            continue
+        # Skip tiny dimension hints (e.g. -150x150, -50x50)
+        if re.search(r"-\d{1,2}x\d{1,2}\.(jpg|png|webp)", low):
             continue
         if full in seen:
             continue
         seen.add(full)
         img_urls.append(full)
+    return img_urls
+
+
+def extract_gallery(client, post_url: str) -> tuple[str, list[str]]:
+    html = fetch_html(client, post_url)
+    soup = BeautifulSoup(html, "lxml")
+    title_el = soup.select_one("h1.entry-title, h1, .entry-title, title")
+    title = title_el.get_text(strip=True) if title_el else "Untitled"
+    img_urls = _extract_images(soup, post_url)
+    if len(img_urls) <= 1:
+        dump_debug_html(f"bestgirlsexy-detail-{slugify(post_url)}", html)
     return title, img_urls
 
 

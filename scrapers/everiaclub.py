@@ -30,8 +30,18 @@ OUT_DIR = Path("output")
 PAGES_TO_SCAN = 5  # scan up to 5 listing pages for unprocessed posts
 
 
+def _warmup(client) -> None:
+    """Visit Google to obtain natural cookies / referer chain that some
+    Cloudflare-protected sites use to identify benign clients."""
+    try:
+        client.session.get("https://www.google.com/", timeout=10)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def list_post_urls(client) -> list[str]:
     """Return post URLs from newest to oldest across first N pages."""
+    _warmup(client)
     urls: list[str] = []
     for page in range(1, PAGES_TO_SCAN + 1):
         url = BASE if page == 1 else f"{BASE}page/{page}/"

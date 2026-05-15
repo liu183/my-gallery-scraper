@@ -81,12 +81,16 @@ def list_actresses(client) -> list[tuple[str, str]]:
     return results
 
 
+_EROPURU_INDEX_DIRS = ("/zyoyu/", "/janru/", "/genre/", "/tag/", "/category/")
+
+
 def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
     """Find gallery URLs from an actress page.
 
-    Gallery URLs typically live OUTSIDE /zyoyu/ on this site (under /post/,
-    /gravure/, or year-month archives). They are NOT navigation links to
-    other actresses.
+    Gallery URLs are NOT navigation links to other index pages. Exclude
+    /zyoyu/ (actress index), /janru/ (genre index), /tag/, /category/.
+    Galleries on this site typically have URLs like:
+      /<slug>.html  or  /<year>/<month>/<slug>/
     """
     html = fetch_html(client, actress_url)
     soup = BeautifulSoup(html, "lxml")
@@ -100,11 +104,17 @@ def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
         full = urljoin(actress_url, href)
         if BASE not in full or full == actress_url:
             continue
-        if "/zyoyu/" in full:  # navigation to other actresses, skip
+        # Skip index/navigation pages
+        if any(d in full for d in _EROPURU_INDEX_DIRS):
             continue
-        if any(p in full for p in ("/wp-", "/feed", "#", "/category/", "/tag/", "/author/")):
+        if any(p in full for p in ("/wp-", "/feed", "#", "/author/", "?", "/page/")):
             continue
-        if not (full.endswith(".html") or full.rstrip("/").count("/") >= 3):
+        # Must look like a content page
+        path = urlparse(full).path
+        if not (path.endswith(".html") or path.rstrip("/").count("/") >= 2):
+            continue
+        # Skip homepage
+        if path in ("/", "/index.html"):
             continue
         if full in seen:
             continue
@@ -115,30 +125,55 @@ def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
     return results
 
 
+_SKIP_IMG_HINTS = (
+    "avatar", "icon", "logo", "emoji", "smile", "loading", "spinner",
+    "favicon", "/themes/", "/wp-content/themes/", "gravatar", "banner",
+    "/plugins/", "wp-includes",
+)
+
+
 def extract_gallery(client, gallery_url: str) -> tuple[str, list[str]]:
+    import re
     html = fetch_html(client, gallery_url)
     soup = BeautifulSoup(html, "lxml")
     title_el = soup.select_one("h1, h2.entry-title, .entry-title, title")
     title = title_el.get_text(strip=True) if title_el else "Untitled"
     img_urls: list[str] = []
     seen = set()
-    container = soup.select_one("article, .entry-content, .post-content, main") or soup
-    for img in container.select("img"):
+    containers = [
+        soup.select_one("article .entry-content"),
+        soup.select_one("article"),
+        soup.select_one(".entry-content"),
+        soup.select_one(".post-content"),
+        soup.select_one("main"),
+        soup,
+    ]
+    container = next((c for c in containers if c is not None), soup)
+    imgs = container.select("img")
+    if len(imgs) <= 1:
+        imgs = soup.select("body img") or soup.select("img")
+    for img in imgs:
         src = (
             img.get("data-src")
             or img.get("data-lazy-src")
             or img.get("data-original")
+            or img.get("srcset", "").split(",")[0].strip().split(" ")[0]
             or img.get("src")
         )
-        if not src:
+        if not src or src.startswith("data:"):
             continue
         full = urljoin(gallery_url, src)
-        if any(skip in full.lower() for skip in ("avatar", "icon", "logo", "emoji", "banner")):
+        low = full.lower()
+        if any(skip in low for skip in _SKIP_IMG_HINTS):
+            continue
+        if re.search(r"-\d{1,2}x\d{1,2}\.(jpg|png|webp)", low):
             continue
         if full in seen:
             continue
         seen.add(full)
         img_urls.append(full)
+    if len(img_urls) <= 1:
+        dump_debug_html(f"eropuru-detail-{slugify(gallery_url)}", html)
     return title, img_urls
 
 

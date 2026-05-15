@@ -23,8 +23,8 @@ DEFAULT_TIMEOUT = 45.0
 MIN_DELAY = 1.5
 MAX_DELAY = 3.5
 
-# curl_cffi browser fingerprints to rotate. "chrome124" is the latest stable.
-IMPERSONATE_POOL = ["chrome124", "chrome120", "chrome116", "edge101", "safari17_0"]
+# curl_cffi browser fingerprints to rotate. "chrome124" is newer than chrome120.
+IMPERSONATE_POOL = ["chrome124", "chrome120", "chrome116", "edge101"]
 
 
 def random_impersonate() -> str:
