@@ -1,0 +1,63 @@
+name: scrape-everiaclub
+
+on:
+  schedule:
+    - cron: "5 * * * *"   # every hour at :05
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: scrape-everiaclub
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        id: run
+        run: python -m scrapers.everiaclub
+
+      - name: Read artifact meta
+        if: steps.run.outputs.status == 'ok'
+        id: meta
+        shell: bash
+        run: |
+          NAME=$(python -c "import json;print(json.load(open('output/artifact-meta.json'))['artifact_name'])")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        if: steps.run.outputs.status == 'ok'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.name }}
+          path: output
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Commit state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/everiaclub.json || true
+          if git diff --cached --quiet; then
+            echo "no state changes"
+          else
+            git commit -m "chore(state): everiaclub $(date -u +%FT%TZ)"
+            git push
+          fi

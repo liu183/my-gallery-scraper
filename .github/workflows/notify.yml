@@ -1,0 +1,74 @@
+name: notify-feishu
+
+on:
+  schedule:
+    - cron: "45 */5 * * *"   # every 5 hours at minute :45
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Number of galleries to send in this run"
+        required: false
+        default: "3"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: notify-feishu
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Dispatch notifications
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          NOTIFY_BATCH_SIZE: ${{ github.event.inputs.batch_size || '3' }}
+          IMAGE_SEND_INTERVAL: "1.0"
+
+          FEISHU_EVERIACLUB_APP_ID: ${{ secrets.FEISHU_EVERIACLUB_APP_ID }}
+          FEISHU_EVERIACLUB_APP_SECRET: ${{ secrets.FEISHU_EVERIACLUB_APP_SECRET }}
+          FEISHU_EVERIACLUB_WEBHOOK: ${{ secrets.FEISHU_EVERIACLUB_WEBHOOK }}
+          FEISHU_EVERIACLUB_WEBHOOK_SECRET: ${{ secrets.FEISHU_EVERIACLUB_WEBHOOK_SECRET }}
+
+          FEISHU_BESTGIRLSEXY_APP_ID: ${{ secrets.FEISHU_BESTGIRLSEXY_APP_ID }}
+          FEISHU_BESTGIRLSEXY_APP_SECRET: ${{ secrets.FEISHU_BESTGIRLSEXY_APP_SECRET }}
+          FEISHU_BESTGIRLSEXY_WEBHOOK: ${{ secrets.FEISHU_BESTGIRLSEXY_WEBHOOK }}
+          FEISHU_BESTGIRLSEXY_WEBHOOK_SECRET: ${{ secrets.FEISHU_BESTGIRLSEXY_WEBHOOK_SECRET }}
+
+          FEISHU_EROPURU_APP_ID: ${{ secrets.FEISHU_EROPURU_APP_ID }}
+          FEISHU_EROPURU_APP_SECRET: ${{ secrets.FEISHU_EROPURU_APP_SECRET }}
+          FEISHU_EROPURU_WEBHOOK: ${{ secrets.FEISHU_EROPURU_WEBHOOK }}
+          FEISHU_EROPURU_WEBHOOK_SECRET: ${{ secrets.FEISHU_EROPURU_WEBHOOK_SECRET }}
+
+          FEISHU_GEINOU_NUDE_APP_ID: ${{ secrets.FEISHU_GEINOU_NUDE_APP_ID }}
+          FEISHU_GEINOU_NUDE_APP_SECRET: ${{ secrets.FEISHU_GEINOU_NUDE_APP_SECRET }}
+          FEISHU_GEINOU_NUDE_WEBHOOK: ${{ secrets.FEISHU_GEINOU_NUDE_WEBHOOK }}
+          FEISHU_GEINOU_NUDE_WEBHOOK_SECRET: ${{ secrets.FEISHU_GEINOU_NUDE_WEBHOOK_SECRET }}
+        run: python -m notify.dispatch
+
+      - name: Commit sent/failed state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/sent.json state/failed.json || true
+          if git diff --cached --quiet; then
+            echo "no state changes"
+          else
+            git commit -m "chore(notify): update sent/failed state $(date -u +%FT%TZ)"
+            git push
+          fi
