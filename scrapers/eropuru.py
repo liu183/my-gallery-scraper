@@ -81,7 +81,12 @@ def list_actresses(client) -> list[tuple[str, str]]:
     return results
 
 
-_EROPURU_INDEX_DIRS = ("/zyoyu/", "/janru/", "/genre/", "/tag/", "/category/")
+_EROPURU_INDEX_DIRS = (
+    "/zyoyu/", "/janru/", "/genre/", "/tag/", "/category/",
+    "/maker/", "/kantoku/", "/sirizu/", "/ymd/", "/okini/", "/label/",
+)
+# Whitelist: a real gallery on eropuru lives under /package/<id>
+_GALLERY_PREFIX = "/package/"
 
 
 def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
@@ -104,7 +109,10 @@ def list_galleries(client, actress_url: str) -> list[tuple[str, str]]:
         full = urljoin(actress_url, href)
         if BASE not in full or full == actress_url:
             continue
-        # Skip index/navigation pages
+        # Whitelist: must be a real gallery page
+        if _GALLERY_PREFIX not in full:
+            continue
+        # Skip index/navigation pages (defense-in-depth)
         if any(d in full for d in _EROPURU_INDEX_DIRS):
             continue
         if any(p in full for p in ("/wp-", "/feed", "#", "/author/", "?", "/page/")):
