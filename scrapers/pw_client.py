@@ -39,6 +39,12 @@ class PWClient:
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         self.page: Page = self.context.new_page()
+        # Apply playwright-stealth patches to hide automation fingerprints
+        try:
+            from playwright_stealth import stealth_sync
+            stealth_sync(self.page)
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] playwright-stealth not applied: {e}")
 
     def close(self) -> None:
         try:
@@ -71,21 +77,25 @@ class PWClient:
             try:
                 self.page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 target = wait_selector or "article, main, .entry-content, .post"
-                # CF challenge typically sets <title>Just a moment...</title>
-                # Poll up to 30s for either the title to change OR target to appear.
-                for _ in range(30):
-                    title = self.page.title() or ""
-                    if "just a moment" not in title.lower() and "checking" not in title.lower():
+                # CF challenge titles in multiple locales
+                cf_markers = (
+                    "just a moment", "checking", "attention required",
+                    "しばらくお待ち", "お待ちください", "请稍候", "請稍候",
+                )
+                # Poll up to 60s for challenge to clear
+                for _ in range(60):
+                    title = (self.page.title() or "").lower()
+                    if not any(m in title for m in cf_markers):
                         try:
                             if self.page.query_selector(target):
                                 break
                         except Exception:  # noqa: BLE001
                             pass
                     self.page.wait_for_timeout(1000)
-                self.page.wait_for_timeout(1500)
+                self.page.wait_for_timeout(2000)
                 html = self.page.content()
                 title = (self.page.title() or "").lower()
-                if "just a moment" in title or "attention required" in title:
+                if any(m in title for m in cf_markers):
                     # Still on challenge page — dump and retry with longer wait
                     print(f"[warn] CF challenge persists for {url} (title={title!r})")
                     Path("output").mkdir(parents=True, exist_ok=True)
