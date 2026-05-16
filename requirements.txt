@@ -7,3 +7,4 @@ pillow==10.4.0
 requests==2.32.3
 playwright==1.48.0
 playwright-stealth==1.0.6
+setuptools>=70.0.0
