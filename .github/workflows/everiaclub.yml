@@ -43,6 +43,15 @@ jobs:
           NAME=$(python -c "import json;print(json.load(open('output/artifact-meta.json'))['artifact_name'])")
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Upload debug artifacts
+        if: always() && steps.run.outputs.status != 'ok'
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-everiaclub-${{ github.run_id }}
+          path: output/debug-*
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Upload artifact
         if: steps.run.outputs.status == 'ok'
         uses: actions/upload-artifact@v4

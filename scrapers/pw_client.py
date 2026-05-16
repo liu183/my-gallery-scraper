@@ -63,28 +63,48 @@ class PWClient:
     def fetch_html(self, url: str, wait_selector: str | None = None) -> str:
         """Navigate to URL, wait for content, return HTML.
 
-        Handles Cloudflare interstitial by waiting up to 20s for any
+        Handles Cloudflare interstitial by waiting up to 30s for any
         challenge to clear (cf_clearance cookie issued, page reloaded).
         """
         last_err: Exception | None = None
         for attempt in range(3):
             try:
-                self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                # CF challenge may show a "Verifying you are human" page; wait
-                # for the real content selector or a generic <article>/<main>.
+                self.page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 target = wait_selector or "article, main, .entry-content, .post"
-                try:
-                    self.page.wait_for_selector(target, timeout=20000)
-                except Exception:  # noqa: BLE001
-                    # Even if no selector matched, the HTML may still be useful
-                    pass
-                # Small settle delay for lazy-loaded content
+                # CF challenge typically sets <title>Just a moment...</title>
+                # Poll up to 30s for either the title to change OR target to appear.
+                for _ in range(30):
+                    title = self.page.title() or ""
+                    if "just a moment" not in title.lower() and "checking" not in title.lower():
+                        try:
+                            if self.page.query_selector(target):
+                                break
+                        except Exception:  # noqa: BLE001
+                            pass
+                    self.page.wait_for_timeout(1000)
                 self.page.wait_for_timeout(1500)
-                return self.page.content()
+                html = self.page.content()
+                title = (self.page.title() or "").lower()
+                if "just a moment" in title or "attention required" in title:
+                    # Still on challenge page — dump and retry with longer wait
+                    print(f"[warn] CF challenge persists for {url} (title={title!r})")
+                    Path("output").mkdir(parents=True, exist_ok=True)
+                    Path(f"output/debug-pw-cf-{attempt}.html").write_text(html, encoding="utf-8")
+                    try:
+                        self.page.screenshot(path=f"output/debug-pw-cf-{attempt}.png", full_page=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    time.sleep(5 + attempt * 3)
+                    continue
+                return html
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 time.sleep(2 + attempt * 2)
-        raise RuntimeError(f"playwright failed for {url}: {last_err}")
+        # Final fallback: return last content even if challenge — caller decides
+        try:
+            return self.page.content()
+        except Exception:
+            raise RuntimeError(f"playwright failed for {url}: {last_err}")
 
     def download_image(self, url: str, dst: Path, referer: str | None = None) -> int:
         """Download via the same browser context (uses cf_clearance cookie)."""
