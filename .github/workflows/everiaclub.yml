@@ -44,7 +44,7 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload debug artifacts
-        if: always() && steps.run.outputs.status != 'ok'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-everiaclub-${{ github.run_id }}

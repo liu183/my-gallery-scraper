@@ -30,24 +30,54 @@ PAGES_TO_SCAN = 3
 
 def list_post_urls(client: PWClient) -> list[str]:
     urls: list[str] = []
+    base_host = "everiaclub.com"
     for page in range(1, PAGES_TO_SCAN + 1):
         url = BASE if page == 1 else f"{BASE}page/{page}/"
         try:
-            html = client.fetch_html(url, wait_selector="article")
+            html = client.fetch_html(url, wait_selector="a")
         except Exception as e:  # noqa: BLE001
             print(f"[warn] list page {url}: {e}")
             break
+        print(f"[debug] page {page} html length={len(html)}")
+        # Dump first page for inspection regardless
+        if page == 1:
+            Path("output").mkdir(parents=True, exist_ok=True)
+            Path("output/debug-everiaclub-list.html").write_text(html, encoding="utf-8")
         soup = BeautifulSoup(html, "lxml")
         found: list[str] = []
-        for a in soup.select("article h2 a, article .entry-title a, h2.entry-title a"):
-            href = a.get("href")
-            if href and href not in found:
-                found.append(href)
-        if not found:
-            for a in soup.select("a[rel='bookmark']"):
+        selectors = [
+            "article h2 a", "article h3 a", "article .entry-title a",
+            "h2.entry-title a", "h2.post-title a", ".post-title a",
+            "a[rel='bookmark']", ".entry-header a", ".post-header a",
+            ".post a.permalink", ".grid-item a", ".post-item a",
+            ".list-item a", ".thumbnail a", ".thumb a",
+            ".card a", "li.post a", ".loop-item a",
+        ]
+        for sel in selectors:
+            for a in soup.select(sel):
                 href = a.get("href")
-                if href:
+                if href and href not in found:
                     found.append(href)
+            if found:
+                break
+        # Last-resort: collect internal article-shaped links
+        if not found:
+            for a in soup.select("a[href]"):
+                href = a.get("href") or ""
+                if (
+                    base_host in href
+                    and href != url
+                    and "/category/" not in href
+                    and "/page/" not in href
+                    and "/tag/" not in href
+                    and "/author/" not in href
+                    and "#" not in href
+                    and "/wp-" not in href
+                    and href.rstrip("/").count("/") >= 3
+                ):
+                    if href not in found:
+                        found.append(href)
+        print(f"[debug] page {page} found {len(found)} links")
         for u in found:
             if u not in urls:
                 urls.append(u)
