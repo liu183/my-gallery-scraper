@@ -1,8 +1,10 @@
 name: scrape-everiaclub
 
 on:
-  schedule:
-    - cron: "5 * * * *"   # every hour at :05
+  # schedule disabled: Cloudflare Turnstile blocks GitHub Actions IPs.
+  # Re-enable once a residential proxy / FlareSolverr is provisioned.
+  # schedule:
+  #   - cron: "5 * * * *"
   workflow_dispatch:
 
 permissions:
