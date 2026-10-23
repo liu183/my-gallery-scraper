@@ -1,24 +1,6 @@
 {
   "sent": [
     {
-      "artifact_id": 7186341327,
-      "artifact_name": "gallery-eropuru-20260524T153904Z-vr-8",
-      "at": "2026-08-09T02:58:08.349396+00:00",
-      "message": "sent 9/9 images"
-    },
-    {
-      "artifact_id": 7186749628,
-      "artifact_name": "gallery-geinou_nude-20260524T164342Z-gallery",
-      "at": "2026-08-09T06:45:57.765913+00:00",
-      "message": "sent 472/472 images"
-    },
-    {
-      "artifact_id": 7186950484,
-      "artifact_name": "gallery-bestgirlsexy-20260524T171622Z-japan-jp-sarina-kashiwagi-reina---photo-book-57p---bestgirls",
-      "at": "2026-08-09T06:50:00.882535+00:00",
-      "message": "sent 86/86 images"
-    },
-    {
       "artifact_id": 7187029796,
       "artifact_name": "gallery-eropuru-20260524T172900Z-vr-7",
       "at": "2026-08-09T06:50:23.942858+00:00",
@@ -5999,6 +5981,24 @@
       "artifact_name": "gallery-geinou_nude-20260811T112640Z-gallery",
       "at": "2026-10-23T19:42:01.973354+00:00",
       "message": "sent 158/158 images"
+    },
+    {
+      "artifact_id": 9109784267,
+      "artifact_name": "gallery-geinou_nude-20260811T163118Z-gallery",
+      "at": "2026-10-23T23:34:09.868736+00:00",
+      "message": "sent 161/161 images"
+    },
+    {
+      "artifact_id": 9121073979,
+      "artifact_name": "gallery-geinou_nude-20260811T222255Z-gallery",
+      "at": "2026-10-23T23:37:56.843907+00:00",
+      "message": "sent 104/104 images"
+    },
+    {
+      "artifact_id": 9162412511,
+      "artifact_name": "gallery-geinou_nude-20260812T232157Z-gallery",
+      "at": "2026-10-23T23:44:51.359863+00:00",
+      "message": "sent 176/176 images"
     }
   ]
 }
